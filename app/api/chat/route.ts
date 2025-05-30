@@ -14,10 +14,7 @@ export async function POST(request: NextRequest) {
       body.text.substring(0, 50) + '...'
     );
 
-    const FASTAPI_URL =
-      process.env.NEXT_PUBLIC_FASTAPI_URL || 'http://66.70.178.38:8000';
-
-    const response = await fetch('http://66.70.178.38/predict', {
+    const response = await fetch('http://66.70.178.38:8000/predict', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ text: body.text }),
