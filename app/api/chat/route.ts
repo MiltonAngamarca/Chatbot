@@ -14,14 +14,13 @@ export async function POST(request: NextRequest) {
       body.text.substring(0, 50) + '...'
     );
 
-    const response = await fetch('http://192.168.1.120:8000/predict', {
+    const FASTAPI_URL =
+      process.env.NEXT_PUBLIC_FASTAPI_URL || 'http://66.70.178.38:8000';
+
+    const response = await fetch(`${FASTAPI_URL}/predict`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        text: body.text,
-      }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: body.text }),
     });
 
     if (!response.ok) {
