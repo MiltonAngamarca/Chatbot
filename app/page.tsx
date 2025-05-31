@@ -263,35 +263,127 @@ export default function Home() {
         },
         body: JSON.stringify({
           text: currentInput,
+          stream: true, // Send stream: true to the API route
         }),
       });
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(
-          errorData.error || `HTTP error! status: ${response.status}`
-        );
+        let errorText = `HTTP error! status: ${response.status}`;
+        try {
+          const errorData = await response.json();
+          errorText = errorData.error || errorText;
+        } catch (e) {
+          // If response is not JSON, use the status text or default error
+          errorText = response.statusText || errorText;
+        }
+        throw new Error(errorText);
       }
 
-      const data = await response.json();
+      const contentType = response.headers.get('content-type');
 
-      // --- MODIFICACIÓN PARA FILTRAR <think>...</think> ---
-      let botResponseText =
-        data.prediction || 'No se pudo obtener una respuesta.';
-      // Filtra el bloque <think>...</think> usando una expresión regular
-      botResponseText = botResponseText
-        .replace(/<think>[\s\S]*?<\/think>\s*/g, '')
-        .trim();
-      // --- FIN DE LA MODIFICACIÓN ---
+      if (contentType && contentType.includes('text/event-stream')) {
+        // Handle streaming response
+        const reader = response.body?.getReader();
+        const decoder = new TextDecoder();
+        let accumulatedBotResponse = '';
+        let botMessageId = Date.now().toString() + '-bot-stream';
 
-      const botMessage: Message = {
-        id: Date.now().toString() + '-bot',
-        // Usa el texto filtrado
-        text: botResponseText || 'No se pudo obtener una respuesta.', // Fallback si el texto queda vacío
-        sender: 'bot',
-        timestamp: new Date(),
-      };
-      updateActiveSessionMessages([...activeMessages, userMessage, botMessage]);
+        // Add a placeholder for the bot's message immediately
+        const initialBotMessage: Message = {
+          id: botMessageId,
+          text: '', // Start with empty text
+          sender: 'bot',
+          timestamp: new Date(),
+        };
+        updateActiveSessionMessages([
+          ...activeMessages,
+          userMessage,
+          initialBotMessage,
+        ]);
+
+        if (reader) {
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) {
+              break;
+            }
+            const chunk = decoder.decode(value, { stream: true });
+            // SSE format: data: {"content": "..."}\n\n
+            const lines = chunk.split('\n\n');
+            for (const line of lines) {
+              if (line.startsWith('data: ')) {
+                const jsonStr = line.substring('data: '.length);
+                if (jsonStr.trim() === '[DONE]') {
+                  break;
+                }
+                try {
+                  const parsed = JSON.parse(jsonStr);
+                  if (parsed.content) {
+                    accumulatedBotResponse += parsed.content;
+                    // Update the existing bot message with new content
+                    setChatSessions((prevSessions) =>
+                      prevSessions.map((session) =>
+                        session.id === activeChatId
+                          ? {
+                              ...session,
+                              messages: session.messages.map((msg) =>
+                                msg.id === botMessageId
+                                  ? {
+                                      ...msg,
+                                      text: accumulatedBotResponse
+                                        .replace(
+                                          /<think>[\s\S]*?<\/think>\s*/g,
+                                          ''
+                                        )
+                                        .trim(),
+                                    }
+                                  : msg
+                              ),
+                              lastActivity: new Date(),
+                            }
+                          : session
+                      )
+                    );
+                  }
+                } catch (e) {
+                  console.warn(
+                    'Error parsing stream JSON:',
+                    e,
+                    'Chunk:',
+                    jsonStr
+                  );
+                }
+              }
+            }
+          }
+        }
+        // Final cleanup of the streamed message, if necessary (already done in stream loop)
+        // const finalCleanedText = accumulatedBotResponse.replace(/<think>[\s\S]*?<\/think>\s*/g, '').trim();
+        // setChatSessions(prevSessions => /* ... update final message ... */ );
+      } else {
+        // Handle non-streaming JSON response (fallback)
+        const data = await response.json();
+        let botResponseText =
+          data.prediction ||
+          data.content ||
+          data.text ||
+          'No se pudo obtener una respuesta.';
+        botResponseText = botResponseText
+          .replace(/<think>[\s\S]*?<\/think>\s*/g, '')
+          .trim();
+
+        const botMessage: Message = {
+          id: Date.now().toString() + '-bot-json',
+          text: botResponseText || 'No se pudo obtener una respuesta.',
+          sender: 'bot',
+          timestamp: new Date(),
+        };
+        updateActiveSessionMessages([
+          ...activeMessages,
+          userMessage,
+          botMessage,
+        ]);
+      }
     } catch (error) {
       console.error('Error fetching chat response:', error);
       const errorMessage: Message = {
@@ -544,7 +636,10 @@ export default function Home() {
                     <span
                       onClick={(e) => {
                         e.stopPropagation();
-                        handleStartEditingName(session.id, getSessionDisplayName(session));
+                        handleStartEditingName(
+                          session.id,
+                          getSessionDisplayName(session)
+                        );
                       }}
                       className={`text-sm block truncate cursor-pointer hover:bg-slate-700/30 px-1 py-0.5 rounded transition-colors ${
                         activeChatId === session.id

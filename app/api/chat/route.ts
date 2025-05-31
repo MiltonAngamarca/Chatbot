@@ -14,11 +14,33 @@ export async function POST(request: NextRequest) {
       body.text.substring(0, 50) + '...'
     );
 
-    const response = await fetch('http://66.70.178.38:8000/predict', {
+    const response = await fetch('http://192.168.1.120:8000/predict', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text: body.text }),
+      // Ensure the 'stream' property is forwarded to the backend
+      body: JSON.stringify({ text: body.text, stream: body.stream || false }),
     });
+
+    // If the original request intended to stream, and the backend supports it,
+    // we should pipe the stream back to the client.
+    // For now, let's assume the backend will correctly set Content-Type for streams.
+    const contentType = response.headers.get('content-type');
+    console.log('FastAPI response content-type:', contentType);
+
+    if (
+      body.stream &&
+      contentType &&
+      contentType.includes('text/event-stream')
+    ) {
+      console.log('Proxying stream from FastAPI');
+      // Ensure we return a streaming response if the backend provides one
+      // and the initial request was for a stream.
+      return new NextResponse(response.body, {
+        status: response.status,
+        statusText: response.statusText,
+        headers: response.headers,
+      });
+    }
 
     if (!response.ok) {
       console.error('FastAPI error:', response.status, await response.text());
